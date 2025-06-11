@@ -60,7 +60,7 @@
     const history = [];
 
     async function fetchData() {
-      const res = await fetch('https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY');
+      const res = await fetch('https://corsproxy.io/?https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY');
       const text = await res.text();
       const json = JSON.parse(text);
 
