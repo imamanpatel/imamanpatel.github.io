@@ -2,13 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>NIFTY Option Greeks Tracker (Delta & IV)</title>
+  <title>NIFTY Option Greeks Tracker</title>
   <style>
     body {
       background: #111;
       color: #0f0;
       font-family: monospace;
       padding: 20px;
+    }
+    .container {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .column {
+      flex: 1 1 48%;
+      min-width: 400px;
     }
     table {
       width: 100%;
@@ -28,74 +37,62 @@
       font-size: 18px;
       margin-top: 20px;
     }
-    .error {
-      color: red;
+    .label {
+      margin-top: 5px;
+      font-size: 14px;
+      color: #0ff;
     }
-    .success {
-      color: #0f0;
+    .error { color: red; }
+    .success { color: #0f0; }
+    @media (max-width: 900px) {
+      .column {
+        flex: 1 1 100%;
+      }
     }
   </style>
 </head>
 <body>
-  <h2>NIFTY Option Greeks (Δ & IV)</h2>
+
+  <h2>📈 NIFTY Option Greeks Tracker</h2>
   <div id="lastUpdated"></div>
 
-  <table id="liveTable">
-    <thead>
-      <tr><th>Time</th><th>Strike</th><th>Type</th><th>Delta</th><th>IV</th></tr>
-    </thead>
-    <tbody></tbody>
-  </table>
+  <div class="container">
+    <div class="column">
+      <div class="section-title">Δ & IV - Live</div>
+      <div class="label">🕒 Snapshot Time: <span id="liveTime">--:--:--</span></div>
+      <table id="liveTable">
+        <thead><tr><th>Time</th><th>Strike</th><th>Type</th><th>Delta</th><th>IV</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="section-title">Δ & IV - History</div>
+      <div class="label">🕒 History Updated At: <span id="historyTime">--:--:--</span></div>
+      <table id="historyTable">
+        <thead><tr><th>Time</th><th>Type</th><th>Strikes</th><th>Avg Δ</th><th>Δ Delta</th><th>Δ IV</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
 
-  <div class="section-title">📊 Change History (Δ Delta & IV)</div>
-  <table id="historyTable">
-    <thead>
-      <tr><th>Time</th><th>Type</th><th>Strikes</th><th>Avg Δ</th><th>Δ Delta</th><th>Δ IV</th></tr>
-    </thead>
-    <tbody></tbody>
-  </table>
+    <div class="column">
+      <div class="section-title">Γ & ΔΓ - Live</div>
+      <div class="label">🕒 Snapshot Time: <span id="gammaLiveTime">--:--:--</span></div>
+      <table id="gammaLiveTable">
+        <thead><tr><th>Time</th><th>Strike</th><th>Type</th><th>Gamma</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="section-title">Γ & ΔΓ - History</div>
+      <div class="label">🕒 History Updated At: <span id="gammaHistoryTime">--:--:--</span></div>
+      <table id="gammaHistoryTable">
+        <thead><tr><th>Time</th><th>Type</th><th>Strikes</th><th>Avg Γ</th><th>ΔΓ</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
 
   <script>
-    let prev = { CE: { delta: 0, iv: 0 }, PE: { delta: 0, iv: 0 } };
-    const history = [];
+    const API_URL = 'https://nse-proxy.onrender.com/api/nifty'; // ✅ Proxy URL
 
-    async function fetchData() {
-      const res = await fetch('https://corsproxy.io/?https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY');
-      const text = await res.text();
-      const json = JSON.parse(text);
-
-      const atmStrike = Math.round(json.records.data[0].PE.underlyingValue / 50) * 50;
-      const strikes = [atmStrike - 50, atmStrike, atmStrike + 50];
-
-      const ceEntries = [], peEntries = [];
-      const usedStrikes = [];
-
-      for (const item of json.records.data) {
-        if (strikes.includes(item.strikePrice)) {
-          usedStrikes.push(item.strikePrice);
-          ['CE', 'PE'].forEach(type => {
-            if (item[type]) {
-              const iv = parseFloat(item[type].impliedVolatility || 0);
-              let delta = parseFloat(item[type].delta || 0);
-              if (!item[type].delta) {
-                const isCall = type === 'CE';
-                const S = item[type].underlyingValue;
-                const K = item.strikePrice;
-                const T = 7 / 365;
-                const r = 0.06;
-                const sigma = iv / 100 || 0.2;
-                const d1 = (Math.log(S / K) + (r + sigma ** 2 / 2) * T) / (sigma * Math.sqrt(T));
-                delta = isCall ? cdf(d1) : -cdf(-d1);
-              }
-              if (type === 'CE') ceEntries.push({ strike: item.strikePrice, delta, iv });
-              else peEntries.push({ strike: item.strikePrice, delta, iv });
-            }
-          });
-        }
-      }
-
-      updateTables(ceEntries, peEntries, usedStrikes);
-    }
+    let prev = { CE: { delta: 0, iv: 0, gamma: 0 }, PE: { delta: 0, iv: 0, gamma: 0 } };
+    const history = [], gammaHistory = [];
 
     function cdf(x) {
       return (1 + erf(x / Math.sqrt(2))) / 2;
@@ -107,47 +104,104 @@
       const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741,
             a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
       const t = 1 / (1 + p * x);
-      const y = 1 - (((((a5*t + a4)*t + a3)*t + a2)*t + a1)*t)*Math.exp(-x*x);
+      const y = 1 - ((((a5*t + a4)*t + a3)*t + a2)*t + a1)*t * Math.exp(-x*x);
       return sign * y;
     }
 
+    function gammaBS(S, K, T, r, sigma) {
+      const d1 = (Math.log(S / K) + (r + sigma ** 2 / 2) * T) / (sigma * Math.sqrt(T));
+      return Math.exp(-d1 ** 2 / 2) / (S * sigma * Math.sqrt(2 * Math.PI * T));
+    }
+
+    async function fetchData() {
+      try {
+        const res = await fetch(API_URL);
+        const json = await res.json();
+
+        const atmStrike = Math.round(json.records.data[0].PE.underlyingValue / 50) * 50;
+        const strikes = [atmStrike - 50, atmStrike, atmStrike + 50];
+        const ce = [], pe = [];
+
+        for (const item of json.records.data) {
+          if (!strikes.includes(item.strikePrice)) continue;
+          for (const type of ['CE', 'PE']) {
+            const opt = item[type];
+            if (!opt) continue;
+
+            const iv = parseFloat(opt.impliedVolatility || 0);
+            const S = opt.underlyingValue;
+            const K = item.strikePrice;
+            const T = 7 / 365;
+            const r = 0.06;
+            const sigma = iv / 100 || 0.2;
+
+            const d1 = (Math.log(S / K) + (r + sigma ** 2 / 2) * T) / (sigma * Math.sqrt(T));
+            const delta = type === 'CE' ? cdf(d1) : -cdf(-d1);
+            const gamma = gammaBS(S, K, T, r, sigma);
+
+            (type === 'CE' ? ce : pe).push({ strike: K, delta, iv, gamma });
+          }
+        }
+
+        updateTables(ce, pe, strikes);
+      } catch (e) {
+        document.querySelector('#lastUpdated').innerHTML = `<span class="error">✖ ${e.message}</span>`;
+      }
+    }
+
     function updateTables(ce, pe, strikes) {
-      const liveBody = document.querySelector('#liveTable tbody');
-      liveBody.innerHTML = '';
       const now = new Date().toTimeString().split(' ')[0];
+      document.querySelector('#liveTime').textContent = now;
+      document.querySelector('#historyTime').textContent = now;
+      document.querySelector('#gammaLiveTime').textContent = now;
+      document.querySelector('#gammaHistoryTime').textContent = now;
+
+      const liveBody = document.querySelector('#liveTable tbody');
+      const gammaBody = document.querySelector('#gammaLiveTable tbody');
+      liveBody.innerHTML = '';
+      gammaBody.innerHTML = '';
 
       [...ce, ...pe].forEach(row => {
-        const tr = document.createElement('tr');
         const type = ce.includes(row) ? 'CE' : 'PE';
-        tr.innerHTML = `<td>${now}</td><td>${row.strike}</td><td>${type}</td><td>${row.delta.toFixed(4)}</td><td>${row.iv.toFixed(2)}</td>`;
-        liveBody.appendChild(tr);
+        liveBody.innerHTML += `<tr><td>${now}</td><td>${row.strike}</td><td>${type}</td><td>${row.delta.toFixed(4)}</td><td>${row.iv.toFixed(2)}</td></tr>`;
+        gammaBody.innerHTML += `<tr><td>${now}</td><td>${row.strike}</td><td>${type}</td><td>${row.gamma.toFixed(6)}</td></tr>`;
       });
 
-      ['CE', 'PE'].forEach(type => {
-        const entries = type === 'CE' ? ce : pe;
-        const deltaSum = entries.reduce((a, b) => a + b.delta, 0);
-        const ivSum = entries.reduce((a, b) => a + b.iv, 0);
-        const avgDelta = entries.length ? deltaSum / entries.length : 0;
-        const avgIV = entries.length ? ivSum / entries.length : 0;
+      for (const [type, rows] of [['CE', ce], ['PE', pe]]) {
+        const avg = rows.reduce((a, b) => ({
+          delta: a.delta + b.delta,
+          iv: a.iv + b.iv,
+          gamma: a.gamma + b.gamma
+        }), { delta: 0, iv: 0, gamma: 0 });
+
+        const count = rows.length || 1;
+        const avgDelta = avg.delta / count;
+        const avgIV = avg.iv / count;
+        const avgGamma = avg.gamma / count;
+
         const deltaChange = avgDelta - prev[type].delta;
         const ivChange = avgIV - prev[type].iv;
+        const gammaChange = avgGamma - prev[type].gamma;
 
-        history.unshift({ time: now, type, strikes: strikes.join(", "), avgDelta, deltaChange, ivChange });
+        history.unshift({ time: now, type, strikes: strikes.join(','), avgDelta, deltaChange, ivChange });
+        gammaHistory.unshift({ time: now, type, strikes: strikes.join(','), avgGamma, gammaChange });
 
-        prev[type].delta = avgDelta;
-        prev[type].iv = avgIV;
-      });
+        prev[type] = { delta: avgDelta, iv: avgIV, gamma: avgGamma };
+      }
 
-      const histBody = document.querySelector('#historyTable tbody');
-      histBody.innerHTML = history.map(h =>
+      document.querySelector('#historyTable tbody').innerHTML = history.map(h =>
         `<tr><td>${h.time}</td><td>${h.type}</td><td>${h.strikes}</td><td>${h.avgDelta.toFixed(4)}</td><td>${h.deltaChange.toFixed(4)}</td><td>${h.ivChange.toFixed(2)}</td></tr>`
       ).join('');
 
-      document.querySelector('#lastUpdated').innerHTML = '<span class="success">✔ Last Updated: ' + now + '</span>';
+      document.querySelector('#gammaHistoryTable tbody').innerHTML = gammaHistory.map(h =>
+        `<tr><td>${h.time}</td><td>${h.type}</td><td>${h.strikes}</td><td>${h.avgGamma.toFixed(6)}</td><td>${h.gammaChange.toFixed(6)}</td></tr>`
+      ).join('');
+
+      document.querySelector('#lastUpdated').innerHTML = `<span class="success">✔ Updated: ${now}</span>`;
     }
 
     fetchData();
-    setInterval(fetchData, 60000);
+    setInterval(fetchData, 20000);
   </script>
 </body>
 </html>
